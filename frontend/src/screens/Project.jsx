@@ -331,7 +331,7 @@ const Project = () => {
                       runProcess.kill();
                     }
 
-                    const tempRunProcess = await webContainer.spawn("npm", [ "start" ])
+                    let tempRunProcess = await webContainer.spawn("npm", [ "start" ])
 
                     tempRunProcess.output.pipeTo(new WritableStream({
                       write(chunk){

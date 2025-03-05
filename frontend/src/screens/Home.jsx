@@ -22,6 +22,7 @@ const Home = () => {
             console.log(res);
             setProjectName('');
             setIsModalOpen(false);
+            setProject(prevProjects => [...prevProjects, res.data.project]);
         }).catch((err) => {
             console.error(err);
         })

@@ -19,10 +19,17 @@ export const createProject = async (req,res) => {
 
         const newProject = await projectService.createProject({ name, userId })
 
-        res.status(201).json(newProject);
+        //send back a structured response
+        res.status(201).json({
+            success: true,
+            project: newProject
+        })
     } catch (error) {
         console.log(error);
-        res.status(400).send(error.message);
+        res.status(400).json({
+            success: false,
+            error: error.message
+        });
     }
     
 }
