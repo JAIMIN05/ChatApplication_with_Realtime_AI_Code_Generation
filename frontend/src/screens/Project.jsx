@@ -59,18 +59,42 @@ const Project = () => {
     });
   };
 
+  function refreshProjectData() {
+    axios
+      .get(`/projects/get-project/${project._id}`)
+      .then((res) => {
+        console.log("Refreshed project data:", res.data);
+        // Update project state with the latest data
+        setProject(res.data.project);
+      })
+      .catch((err) => {
+        console.log("Error refreshing project data:", err.response?.data || err);
+      });
+  }
+
   function addCollaborators() {
+    if (selectedUserId.size === 0) {
+      alert("Please select at least one user to add as collaborator");
+      return;
+    }
+
+    console.log("Adding collaborators:", Array.from(selectedUserId));
+    
     axios
       .put("/projects/add-user", {
-        projectId: location.state.project._id,
+        projectId: project._id, // Use project._id directly
         users: Array.from(selectedUserId),
       })
       .then((res) => {
-        console.log(res.data);
+        console.log("Collaborators added successfully:", res.data);
         setIsModalOpen(false);
+        setSelectedUserId(new Set()); // Clear selection
+        // Refresh project data to get updated collaborators
+        refreshProjectData();
       })
       .catch((err) => {
-        console.log(err.response.data);
+        console.log("Error adding collaborators:", err.response?.data || err);
+        alert("Failed to add collaborators. Please try again.");
       });
   }
 
@@ -111,51 +135,90 @@ const Project = () => {
   }
 
   useEffect(() => {
-    // console.log(location.state.project);
-
+    console.log("Initial project data:", project);
+    
+    // Initialize socket connection
     initializeSocket(project._id);
-
+    
+    // Setup web container
     if(!webContainer){
       getWebContainer().then(container => {
         setWebContainer(container);
         console.log("Container started");
-      })
+      });
     }
 
+    // Listen for messages
     reciveMessage("project-message", (data) => {
+      console.log("Received message:", data);
       
-      const message = JSON.parse(data.message);
+      try {
+        const message = JSON.parse(data.message);
 
-      console.log(message);
+        console.log("Parsed message:", message);
 
-      webContainer?.mount(message.fileTree)
-
-      if(message.fileTree){
-        setFileTree(message.fileTree);
+        if(webContainer && message.fileTree) {
+          webContainer.mount(message.fileTree);
+        }
+        
+        if(message.fileTree){
+          setFileTree(message.fileTree);
+        }
+        
+        setMessages((prevMessages) => [ ...prevMessages, data]);
+      } catch (error) {
+        console.log("Error processing message:", error);
+        // Still add the message even if parsing fails
+        setMessages((prevMessages) => [ ...prevMessages, data]);
       }
-      
-      setMessages((prevMessages) => [ ...prevMessages, data]);
     });
 
+    // Listen for user joined events
+    reciveMessage("user-joined", (data) => {
+      console.log("User joined:", data);
+      // Refresh project data when a new user joins
+      refreshProjectData();
+    });
+
+    // Get initial project data
     axios
-      .get(`/projects/get-project/${location.state.project._id}`)
+      .get(`/projects/get-project/${project._id}`)
       .then((res) => {
-        // console.log(res.data);
+        console.log("Project data:", res.data);
         setProject(res.data.project);
+        
+        // If fileTree exists in the response, set it
+        if (res.data.project.fileTree) {
+          setFileTree(res.data.project.fileTree);
+        }
       })
       .catch((err) => {
-        console.log(err.response.data);
-        setFileTree(res.data.project.fileTree)
+        console.log("Error fetching project:", err.response?.data || err);
+        // Handle error but don't overwrite fileTree if it doesn't exist
+        if (err.response?.data?.project?.fileTree) {
+          setFileTree(err.response.data.project.fileTree);
+        }
       });
 
+    // Get all users for collaborator selection
     axios
       .get("/users/all")
       .then((res) => {
+        console.log("Available users:", res.data.users);
         setUsers(res.data.users);
       })
       .catch((err) => {
-        console.log(err.response.data);
+        console.log("Error fetching users:", err.response?.data || err);
       });
+
+    // Cleanup function
+    return () => {
+      // Clean up socket listeners
+      if (socketInstance) {
+        socketInstance.off("project-message");
+        socketInstance.off("user-joined");
+      }
+    };
   }, []);
 
   function saveFileTree(ft){
@@ -193,6 +256,44 @@ const Project = () => {
             <i className="ri-group-fill"></i>
           </button>
         </header>
+
+        {/* Side Panel for Collaborators (toggled by users icon) */}
+        {isSidePanelOpen && (
+          <div className="collaborators-panel absolute right-0 top-14 z-20 bg-[#1e293b] border border-[#334155] rounded-bl-lg shadow-lg w-64">
+            <div className="p-3 border-b border-[#334155] flex justify-between items-center">
+              <h3 className="text-[#e2e8f0] font-medium">Project Collaborators</h3>
+              <button 
+                onClick={() => refreshProjectData()} 
+                className="text-[#3b82f6] hover:text-[#60a5fa] transition-colors"
+                title="Refresh collaborators list"
+              >
+                <i className="ri-refresh-line"></i>
+              </button>
+            </div>
+            <div className="p-2 max-h-96 overflow-y-auto">
+              {/* Show project owner first */}
+              {project.owner && (
+                <div className="flex items-center gap-2 p-2 text-[#e2e8f0] hover:bg-[#334155] rounded transition-colors">
+                  <i className="ri-user-star-line text-[#3b82f6]"></i>
+                  <span>{project.owner.email || "Project Owner"}</span>
+                  <span className="ml-auto text-xs bg-[#3b82f6] px-2 py-0.5 rounded">Owner</span>
+                </div>
+              )}
+              
+              {/* Then show collaborators */}
+              {project.users && project.users.length > 0 ? (
+                project.users.map((collaborator, index) => (
+                  <div key={index} className="flex items-center gap-2 p-2 text-[#e2e8f0] hover:bg-[#334155] rounded transition-colors">
+                    <i className="ri-user-line text-[#3b82f6]"></i>
+                    <span>{typeof collaborator === 'object' ? collaborator.email : collaborator}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[#94a3b8] text-sm p-2">No collaborators yet</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Messages Area */}
         <div className="conversation-area pt-14 flex-grow flex flex-col h-full relative">
@@ -384,7 +485,7 @@ const Project = () => {
 
             {/* Modal Body */}
             <div className="p-4 max-h-96 overflow-y-auto">
-              {users.map((u) => (
+              {users.length > 0 ? users.map((u) => (
                 <div
                   key={u._id}
                   onClick={() => handleUserClick(u._id)}
@@ -396,8 +497,25 @@ const Project = () => {
                 >
                   <i className="ri-user-line"></i>
                   <span>{u.email}</span>
+                  {selectedUserId.has(u._id) && (
+                    <i className="ri-check-line ml-auto"></i>
+                  )}
                 </div>
-              ))}
+              )) : (
+                <p className="text-[#94a3b8] text-center">Loading users...</p>
+              )}
+              {users.length === 0 && (
+                <button 
+                  onClick={() => {
+                    axios.get("/users/all")
+                      .then(res => setUsers(res.data.users))
+                      .catch(err => console.log(err));
+                  }}
+                  className="w-full p-2 text-[#3b82f6] hover:underline"
+                >
+                  Retry loading users
+                </button>
+              )}
             </div>
 
             {/* Modal Footer */}

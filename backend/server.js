@@ -18,7 +18,6 @@ const io = new Server(server, {
 
 //middleware for socke.io
 io.use(async (socket, next) => {
-
     try {
         const token = socket.handshake.auth?.token || socket.handshake.headers.authorization?.split(' ')[1];
         const projectId = socket.handshake.query.projectId;
@@ -39,7 +38,7 @@ io.use(async (socket, next) => {
             return next(new Error('Authorization error'))
         }
 
-        socket.use = decoded;
+        socket.user = decoded;
 
         next();
 
@@ -49,25 +48,27 @@ io.use(async (socket, next) => {
 })
 
 io.on('connection', socket => {
-
     socket.roomId = socket.project._id.toString();
 
-    console.log("a user connected");
+    console.log(`User ${socket.user.email} connected to project ${socket.roomId}`);
     
     socket.join(socket.roomId);
 
-    socket.on('project-message', async data => {     
-        
-        const message = data.message;
+    // Let everyone in the room know a new user has joined
+    socket.to(socket.roomId).emit('user-joined', {
+        email: socket.user.email,
+        userId: socket.user._id
+    });
 
+    socket.on('project-message', async data => {     
+        const message = data.message;
         const aiIsPresentInMessage = message.includes("@ai");     
+        
+        // Make sure to broadcast with the correct sender information
         socket.broadcast.to(socket.roomId).emit('project-message', data);
-  
 
         if(aiIsPresentInMessage){
-            
             const prompt = message.replace('@ai', '');
-
             const result = await generateResult(prompt);
 
             io.to(socket.roomId).emit('project-message', {
@@ -76,17 +77,15 @@ io.on('connection', socket => {
                     _id: 'ai',
                     email: 'AI'
                 }
-            })
-
-            return 
+            });
+            return;
         }
-
-    })
+    });
 
     socket.on('disconnect', () => { 
-        console.log("User disconnected");
-        socket.leave(socket.roomId)
-     });
+        console.log(`User ${socket.user?.email} disconnected from project ${socket.roomId}`);
+        socket.leave(socket.roomId);
+    });
 });
 
 server.listen(port, () => {
